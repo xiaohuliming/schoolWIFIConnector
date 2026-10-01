@@ -64,18 +64,22 @@ class FakePortalTest(unittest.TestCase):
         for status in (307, 308):
             with (
                 self.subTest(status=status),
-                mock.patch.dict(fake_portal.state, {"credential_redirect": str(status)},
-                                clear=True),
+                mock.patch.dict(fake_portal.state, {}, clear=True),
                 mock.patch("sys.stderr", new_callable=io.StringIO) as logs,
                 fake_portal.LoopbackHTTPServer(("127.0.0.1", 0), fake_portal.Portal) as server,
             ):
                 fake_portal.state["stage2_port"] = server.server_port
-                server.timeout = 1
-                worker = threading.Thread(target=server.handle_request, daemon=True)
+                worker = threading.Thread(target=server.serve_forever,
+                                          kwargs={"poll_interval": 0.01}, daemon=True)
                 worker.start()
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port,
                                                         timeout=2)
                 try:
+                    connection.request("GET", f"/test-credential-redirect?code={status}")
+                    control_response = connection.getresponse()
+                    self.assertEqual(control_response.status, 200)
+                    control_response.read()
+                    self.assertEqual(fake_portal.state["credential_redirect"], str(status))
                     connection.request("POST", "/stage2/auth",
                                        "userName=fixture-user&userPwd=fixture-secret")
                     response = connection.getresponse()
@@ -83,6 +87,7 @@ class FakePortalTest(unittest.TestCase):
                     response.read()
                 finally:
                     connection.close()
+                    server.shutdown()
                     worker.join(timeout=2)
                 output = logs.getvalue()
                 self.assertEqual(output.count(f"CREDENTIAL_REDIRECT {status}\n"), 1)

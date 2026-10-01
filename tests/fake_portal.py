@@ -261,7 +261,7 @@ class Portal(BaseHTTPRequestHandler):
             return
 
         if path == "/test-credential-redirect":
-            state["credential_redirect"] = query.get("code", [""])[0]
+            state["credential_redirect"] = query.get("code", "")
             self._send(200, "configured")
             return
 
