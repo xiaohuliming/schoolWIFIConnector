@@ -41,7 +41,7 @@ TEST_TARGET := $(BUILD)/schoolwifi_test
 
 DEPS := $(OBJECTS:.o=.d) $(BUILD)/schoolwifi_test.d
 
-.PHONY: all clean install uninstall test e2e check run
+.PHONY: all clean install uninstall test test-fixture e2e check run
 
 all: $(TARGET)
 
@@ -71,7 +71,10 @@ test: $(TEST_TARGET)
 e2e: $(TARGET)
 	@./tests/e2e.sh
 
-check: test e2e
+test-fixture:
+	@python3 -m unittest discover -s tests -p 'test_fake_portal.py'
+
+check: test test-fixture e2e
 
 run: $(TARGET)
 	@$(TARGET) status

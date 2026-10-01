@@ -19,6 +19,7 @@ import os
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from srun_reference import build_info_param_for_test, srun_hmd5, srun_chksum
@@ -58,6 +59,14 @@ SRUN_PAGE = """<!DOCTYPE html><html><head>
     };
 </script>
 </body></html>"""
+
+
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves the bind address with getfqdn, which can delay CI.
+        TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
 
 
 class Portal(BaseHTTPRequestHandler):
@@ -252,7 +261,7 @@ class Portal(BaseHTTPRequestHandler):
             return
 
         if path == "/test-credential-redirect":
-            state["credential_redirect"] = query.get("code", [""])[0]
+            state["credential_redirect"] = query.get("code", "")
             self._send(200, "configured")
             return
 
@@ -425,7 +434,9 @@ class Portal(BaseHTTPRequestHandler):
 
         if path == "/stage2/auth":
             if state.get("credential_redirect"):
-                self._send(int(state["credential_redirect"]), "", headers={"Location":
+                redirect_status = int(state["credential_redirect"])
+                self.log_message("CREDENTIAL_REDIRECT %s", redirect_status)
+                self._send(redirect_status, "", headers={"Location":
                     f"http://localhost:{state['stage2_port']}/test-credential-sink"})
                 return
             if flat.get("tok") != "s2-token":
@@ -486,11 +497,11 @@ def main():
     if args.mode == "two-stage":
         import threading
         state["stage2_port"] = args.port + 1
-        second = ThreadingHTTPServer(("127.0.0.1", state["stage2_port"]), Portal)
+        second = LoopbackHTTPServer(("127.0.0.1", state["stage2_port"]), Portal)
         threading.Thread(target=second.serve_forever, daemon=True).start()
         sys.stderr.write(f"[portal] stage 2 listening on 127.0.0.1:{state['stage2_port']}\n")
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Portal)
+    server = LoopbackHTTPServer(("127.0.0.1", args.port), Portal)
     sys.stderr.write(f"[portal] listening on 127.0.0.1:{args.port} (mode={args.mode})\n")
     server.serve_forever()
 
