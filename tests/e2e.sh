@@ -23,15 +23,38 @@ trap cleanup EXIT
 ok()   { echo "  PASS  $1"; pass=$((pass + 1)); }
 bad()  { echo "  FAIL  $1"; fail=$((fail + 1)); }
 
+wait_for_portal() {
+  local fixture_log="$1"
+  shift
+  local fixture_attempt fixture_url fixture_ready
+  for fixture_attempt in $(seq 1 100); do
+    if ! kill -0 "$PORTAL_PID" 2>/dev/null; then
+      bad "mock portal exited before becoming ready"
+      cat "$fixture_log" >&2
+      exit 1
+    fi
+    fixture_ready=1
+    for fixture_url in "$@"; do
+      if ! curl --fail --silent --noproxy '*' --connect-timeout 1 --max-time 2 \
+          -o /dev/null "$fixture_url"; then
+        fixture_ready=0
+        break
+      fi
+    done
+    [[ "$fixture_ready" -eq 1 ]] && return 0
+    sleep 0.1
+  done
+  bad "mock portal did not become ready: $*"
+  cat "$fixture_log" >&2
+  exit 1
+}
+
 [[ -x "$BIN" ]] || { echo "build first: make"; exit 1; }
 
 python3 "$ROOT/tests/fake_portal.py" --port "$PORT" 2>"$WORK/portal.log" &
 PORTAL_PID=$!
 
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$PORT/login" && break
-  sleep 0.1
-done
+wait_for_portal "$WORK/portal.log" "http://127.0.0.1:$PORT/login"
 
 cat > "$CONFIG" <<INI
 [network]
@@ -121,10 +144,7 @@ echo "e2e: srun portal login"
 SRUN_PORT=$((PORT + 1))
 python3 "$ROOT/tests/fake_portal.py" --port "$SRUN_PORT" --mode srun 2>"$WORK/srun.log" &
 PORTAL_PID=$!
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$SRUN_PORT/srun_portal_pc" && break
-  sleep 0.1
-done
+wait_for_portal "$WORK/srun.log" "http://127.0.0.1:$SRUN_PORT/srun_portal_pc"
 
 SRUN_CONFIG="$WORK/srun.ini"
 cat > "$SRUN_CONFIG" <<INI
@@ -202,10 +222,7 @@ echo "e2e: byod portal login"
 BYOD_PORT=$((PORT + 2))
 python3 "$ROOT/tests/fake_portal.py" --port "$BYOD_PORT" --mode byod 2>"$WORK/byod.log" &
 PORTAL_PID=$!
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$BYOD_PORT/byod/index.html" && break
-  sleep 0.1
-done
+wait_for_portal "$WORK/byod.log" "http://127.0.0.1:$BYOD_PORT/byod/index.html"
 
 BYOD_CONFIG="$WORK/byod.ini"
 cat > "$BYOD_CONFIG" <<INI
@@ -304,10 +321,7 @@ echo "e2e: byod must not loop on the page init points at"
 LOOP_PORT=$((PORT + 3))
 python3 "$ROOT/tests/fake_portal.py" --port "$LOOP_PORT" --mode byod-loop 2>"$WORK/loop.log" &
 PORTAL_PID=$!
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$LOOP_PORT/byod/index.html" && break
-  sleep 0.1
-done
+wait_for_portal "$WORK/loop.log" "http://127.0.0.1:$LOOP_PORT/byod/index.html"
 
 cat > "$WORK/loop.ini" <<INI
 [network]
@@ -335,9 +349,6 @@ grep -q "no <form> and no <input> fields" "$WORK/loop-login.log" \
 kill "$PORTAL_PID" 2>/dev/null
 wait "$PORTAL_PID" 2>/dev/null
 
-kill "$PORTAL_PID" 2>/dev/null
-wait "$PORTAL_PID" 2>/dev/null
-
 # ---------------------------------------------------------------------------
 # Networks that authenticate in stages: satisfying the first portal reveals a
 # second one, on another host, wanting a different account.
@@ -348,10 +359,8 @@ echo "e2e: chained two-stage login"
 TS_PORT=$((PORT + 4))
 python3 "$ROOT/tests/fake_portal.py" --port "$TS_PORT" --mode two-stage 2>"$WORK/ts.log" &
 PORTAL_PID=$!
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/byod/index.html" && break
-  sleep 0.1
-done
+wait_for_portal "$WORK/ts.log" "http://127.0.0.1:$TS_PORT/byod/index.html" \
+  "http://127.0.0.1:$((TS_PORT + 1))/stage2/login"
 
 cat > "$WORK/ts2.ini" <<INI
 [network]
@@ -445,6 +454,9 @@ for redirect_code in 307 308; do
   curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout"
   curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/test-credential-redirect?code=$redirect_code"
   "$BIN" -c "$WORK/network.ini" login >"$WORK/redirect-$redirect_code.log" 2>&1
+  grep -q "CREDENTIAL_REDIRECT $redirect_code" "$WORK/ts.log" \
+    && ok "portal issued HTTP $redirect_code for the credential POST" \
+    || bad "credential POST never reached the HTTP $redirect_code fixture"
   grep -q 'CREDENTIALS_REDIRECTED' "$WORK/ts.log" \
     && bad "credentials followed HTTP $redirect_code" \
     || ok "credential POST does not follow HTTP $redirect_code"
