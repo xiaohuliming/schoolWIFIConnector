@@ -1,5 +1,7 @@
 # schoolWIFIConnector
 
+此仓库是 MAXCOURSE 共同维护的 fork，原作者及上游为 [ahpasserby/schoolWIFIConnector](https://github.com/ahpasserby/schoolWIFIConnector)。保留上游历史和 MIT 协议，后续变更通过 PR 审查。参与方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 macOS 上的校园网自动认证工具。用 C++ 写的单个二进制，零第三方依赖。
 
 > **解决的问题**：连上校园网后需要在网页上做二次认证，但 macOS 的
@@ -41,7 +43,7 @@ schoolwifi login
 先保持网络可用（例如连接手机热点），打开 Mac 的「终端」，逐行运行：
 
 ```bash
-git clone https://github.com/ahpasserby/schoolWIFIConnector.git
+git clone https://github.com/xiaohuliming/schoolWIFIConnector.git
 cd schoolWIFIConnector
 make
 sudo make install
